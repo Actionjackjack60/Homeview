@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <meta name="description" content="A friendly, lightweight personal dashboard for your home.">
+  <title>Homeview</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="dashboard">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Homeview home">
+        <span class="brand-mark" aria-hidden="true">h</span>
+        <span>homeview</span>
+      </a>
+      <p class="welcome" id="greeting">A little view of your day</p>
+      <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">
+        <span class="theme-toggle-icon" aria-hidden="true">🌙</span>
+        <span class="theme-toggle-label">Dark mode</span>
+      </button>
+    </header>
+
+    <section class="hero card" aria-label="Current date and time">
+      <div>
+        <p class="eyebrow" id="date"></p>
+        <h1 class="clock" id="clock" aria-live="off">--:--</h1>
+        <p class="hero-note">Make today a good one.</p>
+      </div>
+      <div class="sun-art" aria-hidden="true">
+        <span class="sun"></span>
+        <span class="sun-halo"></span>
+      </div>
+    </section>
+
+    <div class="content-grid">
+      <section class="card weather-card" aria-labelledby="weather-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">OUTSIDE RIGHT NOW</p>
+            <h2 id="weather-heading">Local weather</h2>
+          </div>
+          <span class="weather-icon" id="weather-icon" aria-hidden="true">☀️</span>
+        </div>
+        <div id="weather-current" class="weather-current" aria-live="polite">
+          <p class="muted">Add your location in config.js to see the weather.</p>
+        </div>
+        <div id="forecast" class="forecast" aria-label="Short forecast"></div>
+        <p class="weather-attribution" id="weather-attribution" hidden>
+          Weather from <a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a>
+        </p>
+      </section>
+
+      <section class="card holidays-card" aria-labelledby="holidays-heading">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">COMING UP</p>
+            <h2 id="holidays-heading">On the horizon</h2>
+          </div>
+          <span class="heading-icon" aria-hidden="true">✨</span>
+        </div>
+        <ul class="holiday-list" id="holiday-list"></ul>
+      </section>
+    </div>
+
+    <section class="links-section" aria-labelledby="links-heading">
+      <div class="section-heading links-heading">
+        <div>
+          <p class="eyebrow">YOUR EVERYDAY FAVORITES</p>
+          <h2 id="links-heading">Quick links</h2>
+        </div>
+      </div>
+      <nav class="quick-links" id="quick-links" aria-label="Quick links"></nav>
+    </section>
+
+    <aside class="promo card" id="holiday-promo" aria-label="Seasonal feature" hidden>
+      <span class="promo-sparkle" aria-hidden="true">✨</span>
+      <div>
+        <p class="eyebrow">A LITTLE CHRISTMAS MAGIC</p>
+        <h2>Keep an eye on the North Pole</h2>
+        <p>Make the countdown extra magical with Santa Snooper.</p>
+      </div>
+      <a class="promo-link" href="https://santasnooper.net" target="_blank" rel="noopener noreferrer">
+        Visit Santa Snooper <span aria-hidden="true">🔗</span>
+      </a>
+    </aside>
+
+    <footer class="footer">Made for home <span aria-hidden="true">·</span> Just your browser, no accounts or tracking</footer>
+  </main>
+</body>
+</html>
