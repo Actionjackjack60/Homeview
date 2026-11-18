@@ -1,6 +1,6 @@
 # Homeview
 
-A lightweight personal dashboard designed to run on a Raspberry Pi and be viewed by devices on your home network. Homeview is a static site: plain HTML, CSS, and JavaScript, with no build step, accounts, cookies, or tracking. It stores only the selected theme in browser storage.
+A lightweight personal dashboard designed to run on a Raspberry Pi and be viewed by devices on your home network. Homeview uses plain HTML, CSS, and JavaScript, with no build step, accounts, cookies, or tracking. It stores only the selected theme in browser storage. An optional Python server enables local-network screen casting.
 
 ## Features
 
@@ -9,9 +9,29 @@ A lightweight personal dashboard designed to run on a Raspberry Pi and be viewed
 - Custom recurring holidays with countdowns
 - Configurable quick links and accent color
 - Light and dark themes with a saved browser preference
-- A Santa Snooper banner shown only in December
+- Browser-based screen casting to other devices on your local network
 - Responsive layout for desktop, tablet, and mobile
 - Weather is optional; the rest of the dashboard works without it
+
+## Screen casting
+
+Casting uses the browser's screen-sharing permission and peer-to-peer video. The Python server serves Homeview and relays connection setup; screen video is sent directly between the devices and is not recorded.
+
+1. Install Python 3 on the computer whose screen you want to share.
+2. From the `Homeview` folder, install the server dependency and start Homeview:
+
+   ```sh
+   python -m pip install -r requirements.txt
+   python server.py
+   ```
+
+3. On that same computer, open the local address printed by the server, usually `http://localhost:8000`, and choose **Start casting**. Select a screen or window in the browser's sharing prompt.
+4. On another device on the same network, open the LAN address printed by the server. Enter the cast code, or open the link shown on the casting computer, and choose **Watch a cast**.
+5. Choose **Stop casting** when finished. The browser's screen-share control can also stop the cast.
+
+Screen capture requires a secure browser context. `http://localhost` is treated as secure for the casting computer; opening the dashboard on that computer through another device's LAN address will not grant screen-capture access. Use a current browser with screen-sharing support. If your firewall prompts you, allow Python on private/home networks so the other device can connect. Keep the cast code private while sharing; anyone on the local network with the code can watch.
+
+The server listens on all network interfaces at port 8000 by default. Change the port with `python server.py --port 8080` if needed. Casting requires the Python server; the static Nginx setup below continues to work for the dashboard but does not provide casting.
 
 ## Raspberry Pi installation
 

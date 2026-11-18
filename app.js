@@ -299,6 +299,371 @@
     }
   }
 
+  function initializeCasting() {
+    const startButton = document.getElementById("cast-start");
+    const stopButton = document.getElementById("cast-stop");
+    const joinForm = document.getElementById("cast-join-form");
+    const joinButton = document.getElementById("cast-join");
+    const codeInput = document.getElementById("cast-code-input");
+    const status = document.getElementById("cast-status");
+    const shareDetails = document.getElementById("cast-share-details");
+    const shareLink = document.getElementById("cast-share-link");
+    const codeDisplay = document.getElementById("cast-code");
+    const copyButton = document.getElementById("cast-copy-link");
+    const videoWrap = document.getElementById("cast-video-wrap");
+    const video = document.getElementById("cast-video");
+    const roomCharacters = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+    const peers = new Map();
+    let activeSocket = null;
+    let captureStream = null;
+    let activeRole = null;
+    let activeCode = null;
+    let serverInfo = null;
+
+    function setStatus(message) {
+      status.textContent = message;
+    }
+
+    function signalUrl() {
+      const url = new URL(window.location.href);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      url.pathname = "/signal";
+      url.search = "";
+      url.hash = "";
+      return url.toString();
+    }
+
+    function closePeers() {
+      peers.forEach(function (peer) {
+        peer.connection.close();
+      });
+      peers.clear();
+      video.srcObject = null;
+      videoWrap.hidden = true;
+    }
+
+    function clearSession(message) {
+      const socket = activeSocket;
+      activeSocket = null;
+      activeRole = null;
+      activeCode = null;
+      if (socket && socket.readyState < WebSocket.CLOSING) {
+        socket.close();
+      }
+      closePeers();
+      if (captureStream) {
+        captureStream.getTracks().forEach(function (track) {
+          track.stop();
+        });
+        captureStream = null;
+      }
+      video.srcObject = null;
+      videoWrap.hidden = true;
+      shareDetails.hidden = true;
+      startButton.hidden = false;
+      startButton.disabled = false;
+      stopButton.hidden = true;
+      joinForm.hidden = false;
+      joinButton.disabled = false;
+      if (message) {
+        setStatus(message);
+      }
+    }
+
+    function sendSignal(type, target, payload) {
+      if (!activeSocket || activeSocket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      activeSocket.send(JSON.stringify({
+        type: type,
+        target: target,
+        payload: payload
+      }));
+    }
+
+    function createPeerConnection(peerId, shouldOffer) {
+      if (peers.has(peerId)) {
+        return peers.get(peerId);
+      }
+
+      const connection = new RTCPeerConnection();
+      const peer = { connection: connection, pendingCandidates: [] };
+      peers.set(peerId, peer);
+
+      if (activeRole === "publisher" && captureStream) {
+        captureStream.getTracks().forEach(function (track) {
+          connection.addTrack(track, captureStream);
+        });
+      }
+
+      connection.onicecandidate = function (event) {
+        if (event.candidate) {
+          sendSignal("ice", peerId, event.candidate.toJSON());
+        }
+      };
+      connection.ontrack = function (event) {
+        video.srcObject = event.streams[0];
+        video.muted = true;
+        videoWrap.hidden = false;
+        video.play().catch(function (error) {
+          console.warn("Homeview could not start cast playback:", error);
+          setStatus("The cast is connected. Press play in the video to start viewing.");
+        });
+      };
+      connection.onconnectionstatechange = function () {
+        if (connection.connectionState === "connected") {
+          setStatus(activeRole === "publisher" ? "Your screen is being cast." : "Connected to the cast.");
+        } else if (connection.connectionState === "failed") {
+          setStatus("The device connection failed. Check that both devices are on the same network.");
+        }
+      };
+
+      if (shouldOffer) {
+        connection.createOffer()
+          .then(function (offer) {
+            return connection.setLocalDescription(offer);
+          })
+          .then(function () {
+            sendSignal("offer", peerId, connection.localDescription.toJSON());
+          })
+          .catch(function (error) {
+            console.error("Homeview could not create a cast connection:", error);
+            setStatus("Could not connect to the viewer: " + error.message);
+          });
+      }
+
+      return peer;
+    }
+
+    async function handleSignalMessage(message) {
+      if (message.type === "peer-joined") {
+        if (activeRole === "publisher" && message.peer.role === "viewer") {
+          createPeerConnection(message.peer.id, true);
+        }
+        return;
+      }
+
+      if (message.type === "peer-left") {
+        const peer = peers.get(message.peerId);
+        if (peer) {
+          peer.connection.close();
+          peers.delete(message.peerId);
+        }
+        if (activeRole === "viewer") {
+          video.srcObject = null;
+          videoWrap.hidden = true;
+          setStatus("The cast ended or the casting device disconnected.");
+        }
+        return;
+      }
+
+      if (message.type === "offer") {
+        const peer = createPeerConnection(message.sender, false);
+        await peer.connection.setRemoteDescription(message.payload);
+        while (peer.pendingCandidates.length) {
+          await peer.connection.addIceCandidate(peer.pendingCandidates.shift());
+        }
+        const answer = await peer.connection.createAnswer();
+        await peer.connection.setLocalDescription(answer);
+        sendSignal("answer", message.sender, peer.connection.localDescription.toJSON());
+        return;
+      }
+
+      const peer = peers.get(message.sender);
+      if (!peer) {
+        return;
+      }
+      if (message.type === "answer") {
+        await peer.connection.setRemoteDescription(message.payload);
+        while (peer.pendingCandidates.length) {
+          await peer.connection.addIceCandidate(peer.pendingCandidates.shift());
+        }
+      } else if (message.type === "ice") {
+        if (peer.connection.remoteDescription) {
+          await peer.connection.addIceCandidate(message.payload);
+        } else {
+          peer.pendingCandidates.push(message.payload);
+        }
+      }
+    }
+
+    function connectToRoom(code, role) {
+      return new Promise(function (resolve, reject) {
+        const socket = new WebSocket(signalUrl());
+        let joined = false;
+        activeSocket = socket;
+
+        function fail(error) {
+          if (!joined) {
+            joined = true;
+            if (activeSocket === socket) {
+              activeSocket = null;
+            }
+            reject(error);
+            socket.close();
+          }
+        }
+
+        socket.addEventListener("open", function () {
+          socket.send(JSON.stringify({ type: "join", room: code, role: role }));
+        });
+        socket.addEventListener("message", function (event) {
+          let message;
+          try {
+            message = JSON.parse(event.data);
+          } catch (error) {
+            console.error("Homeview received an invalid casting message:", error);
+            return;
+          }
+
+          if (message.type === "error") {
+            fail(new Error(message.message || "The casting server rejected the request."));
+            return;
+          }
+          if (message.type === "joined") {
+            joined = true;
+            message.peers.forEach(function (peer) {
+              if (role === "publisher" && peer.role === "viewer") {
+                createPeerConnection(peer.id, true);
+              }
+            });
+            resolve();
+            return;
+          }
+          handleSignalMessage(message).catch(function (error) {
+            console.error("Homeview could not handle a casting message:", error);
+            setStatus("A casting connection error occurred: " + error.message);
+          });
+        });
+        socket.addEventListener("error", function () {
+          fail(new Error("Could not reach the casting server. Check that Homeview's Python server is running."));
+        });
+        socket.addEventListener("close", function () {
+          if (!joined) {
+            fail(new Error("The casting server closed the connection before joining."));
+            return;
+          }
+          if (activeSocket === socket) {
+            clearSession("The casting connection was lost.");
+          }
+        });
+      });
+    }
+
+    function createRoomCode() {
+      const randomValues = new Uint8Array(8);
+      window.crypto.getRandomValues(randomValues);
+      return Array.from(randomValues, function (value) {
+        return roomCharacters[value % roomCharacters.length];
+      }).join("");
+    }
+
+    async function loadServerInfo() {
+      if (serverInfo) {
+        return serverInfo;
+      }
+      const response = await fetch("/api/info", { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("Run Homeview with its Python server to enable screen casting.");
+      }
+      const info = await response.json();
+      if (typeof info.address !== "string" || !Number.isInteger(info.port)) {
+        throw new Error("The Homeview server returned invalid network information.");
+      }
+      serverInfo = info;
+      return serverInfo;
+    }
+
+    async function startCasting() {
+      startButton.disabled = true;
+      setStatus("Preparing to share your screen...");
+      try {
+        await loadServerInfo();
+        if (!window.isSecureContext || !navigator.mediaDevices ||
+            typeof navigator.mediaDevices.getDisplayMedia !== "function") {
+          throw new Error("Screen sharing requires a supported browser and Homeview opened at http://localhost on this computer.");
+        }
+
+        captureStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        activeRole = "publisher";
+        activeCode = createRoomCode();
+        video.srcObject = captureStream;
+        video.muted = true;
+        videoWrap.hidden = false;
+        captureStream.getVideoTracks()[0].addEventListener("ended", function () {
+          if (activeRole === "publisher") {
+            clearSession("Screen sharing stopped.");
+          }
+        });
+        const viewerUrl = new URL(window.location.pathname, "http://" + serverInfo.address + ":" + serverInfo.port);
+        viewerUrl.hash = "cast=" + activeCode;
+        shareLink.value = viewerUrl.toString();
+        codeDisplay.textContent = activeCode;
+        shareDetails.hidden = false;
+        startButton.hidden = true;
+        stopButton.hidden = false;
+        joinForm.hidden = true;
+        setStatus("Connecting to the casting service...");
+        await connectToRoom(activeCode, "publisher");
+        setStatus("Your screen is ready to cast. Join from another device using the link or code below.");
+      } catch (error) {
+        console.error("Homeview could not start screen casting:", error);
+        clearSession(error.name === "NotAllowedError"
+          ? "Screen sharing was canceled or permission was denied."
+          : error.message);
+      } finally {
+        startButton.disabled = false;
+      }
+    }
+
+    async function joinCasting(event) {
+      event.preventDefault();
+      const code = codeInput.value.trim().toUpperCase();
+      if (!/^[A-HJ-NP-Z2-9]{8}$/.test(code)) {
+        setStatus("Enter the 8-character cast code shown on the casting device.");
+        codeInput.focus();
+        return;
+      }
+      joinButton.disabled = true;
+      startButton.disabled = true;
+      activeRole = "viewer";
+      activeCode = code;
+      setStatus("Connecting to the cast...");
+      try {
+        await connectToRoom(code, "viewer");
+        setStatus("Joined the cast. Waiting for the screen...");
+      } catch (error) {
+        console.error("Homeview could not join the cast:", error);
+        clearSession(error.message);
+      } finally {
+        joinButton.disabled = false;
+        startButton.disabled = false;
+      }
+    }
+
+    startButton.addEventListener("click", startCasting);
+    stopButton.addEventListener("click", function () {
+      clearSession("Casting stopped.");
+    });
+    joinForm.addEventListener("submit", joinCasting);
+    copyButton.addEventListener("click", async function () {
+      try {
+        await navigator.clipboard.writeText(shareLink.value);
+        setStatus("Cast link copied. Open it on another device on this network.");
+      } catch (error) {
+        console.warn("Homeview could not copy the cast link:", error);
+        shareLink.select();
+        setStatus("Copy the selected link and open it on another device on this network.");
+      }
+    });
+
+    const linkedCode = new URLSearchParams(window.location.hash.slice(1)).get("cast");
+    if (linkedCode && /^[A-HJ-NP-Z2-9]{8}$/i.test(linkedCode)) {
+      codeInput.value = linkedCode.toUpperCase();
+      setStatus("Cast link ready. Press Watch a cast to connect.");
+    }
+  }
+
   if (typeof config.accentColor === "string" && /^#[0-9a-f]{6}$/i.test(config.accentColor)) {
     document.documentElement.style.setProperty("--accent", config.accentColor);
   }
@@ -309,5 +674,6 @@
   renderLinks();
   renderHolidays();
   renderPromo();
+  initializeCasting();
   loadWeather();
 }());

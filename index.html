@@ -66,6 +66,40 @@
       </section>
     </div>
 
+    <section class="card casting-card" aria-labelledby="casting-heading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ON YOUR LOCAL NETWORK</p>
+          <h2 id="casting-heading">Screen casting</h2>
+        </div>
+        <span class="heading-icon" aria-hidden="true">🖥️</span>
+      </div>
+      <p class="casting-description">Share this computer's screen with another device on the same network.</p>
+      <div class="casting-actions">
+        <button class="cast-button" id="cast-start" type="button">Start casting</button>
+        <form class="cast-join-form" id="cast-join-form">
+          <label class="sr-only" for="cast-code-input">Cast code</label>
+          <input id="cast-code-input" name="code" type="text" inputmode="text" autocomplete="off"
+            autocapitalize="characters" maxlength="8" pattern="[A-HJ-NP-Z2-9]{8}" placeholder="Enter cast code" required>
+          <button class="cast-button cast-button-secondary" id="cast-join" type="submit">Watch a cast</button>
+        </form>
+        <button class="cast-button cast-button-secondary" id="cast-stop" type="button" hidden>Stop casting</button>
+      </div>
+      <p class="cast-status" id="cast-status" role="status" aria-live="polite">Ready. Start a cast here, or enter a code to watch one.</p>
+      <div class="cast-share-details" id="cast-share-details" hidden>
+        <label for="cast-share-link">Open this link on another device:</label>
+        <div class="cast-share-row">
+          <input id="cast-share-link" type="url" readonly>
+          <button class="cast-button cast-button-secondary" id="cast-copy-link" type="button">Copy link</button>
+        </div>
+        <p>Or enter this code on the other device: <strong class="cast-code" id="cast-code"></strong></p>
+      </div>
+      <div class="cast-video-wrap" id="cast-video-wrap" hidden>
+        <video id="cast-video" autoplay playsinline controls></video>
+        <p class="muted">If playback is paused, press play. The preview is muted on this device.</p>
+      </div>
+    </section>
+
     <section class="links-section" aria-labelledby="links-heading">
       <div class="section-heading links-heading">
         <div>
