@@ -16,6 +16,9 @@ cabal.sandbox.config
 *.aux
 *.hp
 *.eventlog
+__pycache__/
+*.py[cod]
+.venv/
 .stack-work/
 cabal.project.local
 cabal.project.local~

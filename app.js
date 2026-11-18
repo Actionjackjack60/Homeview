@@ -567,7 +567,8 @@
         throw new Error("Run Homeview with its Python server to enable screen casting.");
       }
       const info = await response.json();
-      if (typeof info.address !== "string" || !Number.isInteger(info.port)) {
+      if (typeof info.address !== "string" || !Number.isInteger(info.port) ||
+          (info.scheme !== "http" && info.scheme !== "https")) {
         throw new Error("The Homeview server returned invalid network information.");
       }
       serverInfo = info;
@@ -595,7 +596,8 @@
             clearSession("Screen sharing stopped.");
           }
         });
-        const viewerUrl = new URL(window.location.pathname, "http://" + serverInfo.address + ":" + serverInfo.port);
+        const viewerUrl = new URL(window.location.pathname,
+          serverInfo.scheme + "://" + serverInfo.address + ":" + serverInfo.port);
         viewerUrl.hash = "cast=" + activeCode;
         shareLink.value = viewerUrl.toString();
         codeDisplay.textContent = activeCode;
@@ -608,9 +610,12 @@
         setStatus("Your screen is ready to cast. Join from another device using the link or code below.");
       } catch (error) {
         console.error("Homeview could not start screen casting:", error);
-        clearSession(error.name === "NotAllowedError"
+        const message = error.name === "NotAllowedError"
           ? "Screen sharing was canceled or permission was denied."
-          : error.message);
+          : error.name === "NotSupportedError"
+            ? "This browser does not support screen sharing. Try a current desktop browser."
+            : error.message;
+        clearSession(message);
       } finally {
         startButton.disabled = false;
       }

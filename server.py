@@ -6,7 +6,9 @@ import asyncio
 import json
 import logging
 import mimetypes
+import os
 import socket
+import ssl
 import uuid
 from http import HTTPStatus
 from pathlib import Path
@@ -23,6 +25,16 @@ SIGNAL_TYPES = {"offer", "answer", "ice"}
 rooms = {}
 port = 8000
 lan_address = None
+scheme = "https"
+
+
+def default_certificate_paths():
+    if os.name == "nt":
+        config_root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        config_root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    certificate_dir = config_root / "Homeview" / "certs"
+    return certificate_dir / "homeview.pem", certificate_dir / "homeview-key.pem"
 
 
 def json_response(data, status=HTTPStatus.OK):
@@ -43,7 +55,7 @@ def process_request(path, request_headers):
         return HTTPStatus.NOT_FOUND, [], b"Not found"
 
     if request_path == "/api/info":
-        return json_response({"address": lan_address, "port": port})
+        return json_response({"address": lan_address, "port": port, "scheme": scheme})
 
     relative_path = "index.html" if request_path == "/" else request_path.lstrip("/")
     if relative_path not in {"index.html", "styles.css", "app.js", "config.js"}:
@@ -177,24 +189,45 @@ def get_lan_address():
 
 
 async def main():
-    global port, lan_address
+    global port, lan_address, scheme
 
     parser = argparse.ArgumentParser(description="Run Homeview on your local network.")
     parser.add_argument("--port", type=int, default=8000, help="HTTP and signaling port (default: 8000)")
+    default_cert, default_key = default_certificate_paths()
+    parser.add_argument("--cert", type=Path, default=default_cert, help="TLS certificate PEM file")
+    parser.add_argument("--key", type=Path, default=default_key, help="TLS private key PEM file")
+    parser.add_argument("--http", action="store_true", help="serve plain HTTP (LAN screen sharing will not work)")
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
 
     port = args.port
+    ssl_context = None
+    if args.http:
+        scheme = "http"
+    else:
+        if not args.cert.is_file() or not args.key.is_file():
+            parser.error(
+                "TLS certificate or key not found. Create them with mkcert, or pass --http "
+                "to serve without LAN screen sharing."
+            )
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        try:
+            ssl_context.load_cert_chain(args.cert, args.key)
+        except (OSError, ssl.SSLError) as error:
+            parser.error("Could not load the TLS certificate and key: " + str(error))
+        scheme = "https"
+
     lan_address = get_lan_address()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    logging.info("Homeview is available at http://localhost:%d", port)
-    logging.info("On other devices, use http://%s:%d", lan_address, port)
+    logging.info("Homeview is available at %s://localhost:%d", scheme, port)
+    logging.info("On other devices, use %s://%s:%d", scheme, lan_address, port)
     async with websockets.serve(
             handle_client,
             "0.0.0.0",
             port,
             process_request=process_request,
+            ssl=ssl_context,
             max_size=65536):
         await asyncio.Future()
 

@@ -15,25 +15,116 @@ A lightweight personal dashboard designed to run on a Raspberry Pi and be viewed
 
 ## Screen casting
 
-Casting uses the browser's screen-sharing permission and peer-to-peer video. The Python server serves Homeview and relays connection setup; screen video is sent directly between the devices and is not recorded.
+Casting uses the browser's screen-sharing permission and peer-to-peer video. The Python server serves Homeview over HTTPS and relays connection setup; screen video is sent directly between devices and is not recorded. Every device that will start a cast must trust the local certificate authority; this is required by browsers for screen sharing from a LAN page.
 
-1. Install Python 3 on the computer whose screen you want to share.
-2. From the `Homeview` folder, install the server dependency and start Homeview:
+1. Install Python 3 and [mkcert](https://github.com/FiloSottile/mkcert) on the computer running Homeview. On Windows, install mkcert with:
+
+   ```sh
+   winget install --id FiloSottile.mkcert --exact
+   ```
+
+2. In PowerShell, install mkcert's local root certificate and create a server certificate. Replace `192.168.66.21` with this computer's current LAN IPv4 address (find it with `ipconfig`):
+
+   ```powershell
+   mkcert -install
+   $certDir = Join-Path $env:LOCALAPPDATA 'Homeview\certs'
+   New-Item -ItemType Directory -Force $certDir
+   mkcert -cert-file (Join-Path $certDir 'homeview.pem') `
+     -key-file (Join-Path $certDir 'homeview-key.pem') `
+     192.168.66.21 localhost 127.0.0.1
+   ```
+
+3. From the `Homeview` folder, install the server dependency and start Homeview:
 
    ```sh
    python -m pip install -r requirements.txt
    python server.py
    ```
 
-3. On that same computer, open the local address printed by the server, usually `http://localhost:8000`, and choose **Start casting**. Select a screen or window in the browser's sharing prompt.
-4. On another device on the same network, open the LAN address printed by the server. Enter the cast code, or open the link shown on the casting computer, and choose **Watch a cast**.
-5. Choose **Stop casting** when finished. The browser's screen-share control can also stop the cast.
+4. On each other device, trust the root certificate at the path printed by `mkcert -CAROOT` (the file is `rootCA.pem`). Transfer only `rootCA.pem`; never share `rootCA-key.pem` or the server's `homeview-key.pem`. Import the certificate into that device's trusted root certificate store, then restart its browser.
+5. On any device on the same network, open the HTTPS LAN address printed by the server, such as `https://192.168.66.21:8000`. Choose **Start casting** and select a screen or window in the browser prompt. Viewers open the link or enter the code shown on the casting device and choose **Watch a cast**.
+6. Choose **Stop casting** when finished. The browser's screen-share control can also stop the cast.
 
-Screen capture requires a secure browser context. `http://localhost` is treated as secure for the casting computer; opening the dashboard on that computer through another device's LAN address will not grant screen-capture access. Use a current browser with screen-sharing support. If your firewall prompts you, allow Python on private/home networks so the other device can connect. Keep the cast code private while sharing; anyone on the local network with the code can watch.
+Use a current browser with screen-sharing support; support varies in mobile browsers. On Windows, the root certificate can be imported for the current user through `certmgr.msc` under **Trusted Root Certification Authorities**. On macOS, import it into Keychain Access and trust it; on iOS, install the profile and enable full trust in Certificate Trust Settings; on Android, install it from Security settings. The steps vary by OS and browser.
 
-The server listens on all network interfaces at port 8000 by default. Change the port with `python server.py --port 8080` if needed. Casting requires the Python server; the static Nginx setup below continues to work for the dashboard but does not provide casting.
+The server listens on all network interfaces at port 8000 by default. Change the port with `python server.py --port 8080` if needed. If the computer's LAN IP changes, regenerate the certificate with the new IP and restart the server. `python server.py --http` explicitly disables HTTPS, but browsers will not allow screen sharing from LAN HTTP pages. The static Nginx setup below continues to work for the dashboard but does not provide casting.
 
-## Raspberry Pi installation
+## Raspberry Pi casting setup
+
+Use the Python server on the Pi if you want devices to cast their own screens. The Nginx-only setup below serves a static dashboard and does not provide casting.
+
+1. Give the Pi a stable LAN address (for example, make a DHCP reservation in your router), then install the required packages:
+
+   ```sh
+   sudo apt update
+   sudo apt install python3 python3-venv mkcert libnss3-tools
+   ```
+
+   If your Raspberry Pi OS release does not provide `mkcert`, install it using the instructions in the [mkcert project](https://github.com/FiloSottile/mkcert).
+
+2. Copy the `Homeview` folder to the Pi. For example:
+
+   ```sh
+   scp -r Homeview username@raspberrypi.local:~/homeview
+   ```
+
+   Replace `username` and `raspberrypi.local` with the Pi's user and hostname.
+
+3. On the Pi, trust mkcert's local CA and create a certificate for its LAN address and `.local` hostname:
+
+   ```sh
+   mkcert -install
+   ip=$(hostname -I | awk '{print $1}')
+   cert_dir="$HOME/.config/Homeview/certs"
+   mkdir -p "$cert_dir"
+   mkcert -cert-file "$cert_dir/homeview.pem" \
+     -key-file "$cert_dir/homeview-key.pem" \
+     "$ip" "$(hostname).local" localhost 127.0.0.1
+   ```
+
+   If the Pi's LAN IP changes, recreate the certificate with the new address. Configure the router's DHCP reservation first so the certificate remains valid.
+
+4. Install the Python dependency in a virtual environment and test the server:
+
+   ```sh
+   cd ~/homeview
+   python3 -m venv .venv
+   . .venv/bin/activate
+   pip install -r requirements.txt
+   python server.py
+   ```
+
+   The server prints the HTTPS address. Stop it with `Ctrl+C` after confirming the page loads.
+
+5. To start Homeview automatically when the Pi boots, create a systemd service. This uses the current Pi user and assumes the project is in `~/homeview`:
+
+   ```sh
+   sudo tee /etc/systemd/system/homeview.service >/dev/null <<EOF
+   [Unit]
+   Description=Homeview dashboard and casting server
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   Type=simple
+   User=$USER
+   WorkingDirectory=$HOME/homeview
+   ExecStart=$HOME/homeview/.venv/bin/python $HOME/homeview/server.py
+   Restart=on-failure
+
+   [Install]
+   WantedBy=multi-user.target
+   EOF
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now homeview
+   sudo systemctl status homeview
+   ```
+
+6. On each device that will cast, install and trust the Pi's public root certificate (`rootCA.pem`). Find its location with `mkcert -CAROOT` on the Pi and transfer only `rootCA.pem`; never share `rootCA-key.pem` or `homeview-key.pem`. Then open the Pi's HTTPS address in a browser with screen-sharing support. Certificate import steps vary by device; on Windows, use `certmgr.msc` and import under **Trusted Root Certification Authorities**.
+
+The server listens on port 8000. If a firewall is enabled on the Pi, allow TCP port 8000 only from your home LAN. Do not configure router port forwarding. Keep the root CA private key and server private key on the Pi.
+
+## Raspberry Pi static installation (no casting)
 
 These steps install the site with Nginx on Raspberry Pi OS. The Pi and client devices should be connected to the same local network.
 
@@ -132,7 +223,7 @@ The four soonest valid dates are shown. Set `accentColor` to a six-digit CSS hex
 
 ## Privacy and network access
 
-Homeview does not use accounts, cookies, analytics, or tracking scripts. It stores only your light/dark theme preference in localStorage in the browser you use to view the dashboard. The static site is served by your Pi. If weather coordinates are configured, the browser requests forecast data directly from Open-Meteo; this requires internet access. Quick links open in a new tab.
+Homeview does not use accounts, cookies, analytics, or tracking scripts. It stores only your light/dark theme preference in localStorage in the browser you use to view the dashboard. The Python server is intended for a trusted local network. If weather coordinates are configured, the browser requests forecast data directly from Open-Meteo; this requires internet access. Quick links open in a new tab.
 
 The Nginx setup above listens on the local network. Do not forward its port from your router unless you deliberately want to expose Homeview beyond your home.
 
